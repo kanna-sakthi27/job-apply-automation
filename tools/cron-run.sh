@@ -38,6 +38,41 @@ export HOME="${HOME:-$(getent passwd "$(id -u)" | cut -d: -f6)}"
 SLUG="$(printf '%s' "$ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/^-\+//; s/-\+$//')"
 PROJ="$HOME/.commandcode/projects/$SLUG"
 
+# --- model health ---------------------------------------------------------------
+# A model that hit its daily cap, got rate-limited, or twice failed to finish inside the attempt
+# cap is not going to behave differently on the next run an hour later. Remember that here so we
+# stop burning 10 minutes of wall clock (and a run slot) rediscovering it on every channel.
+STATE_DIR="$ROOT/state"; MODEL_STATE="$STATE_DIR/models.state"; STRIKES="$STATE_DIR/model-strikes"
+mkdir -p "$STATE_DIR"
+
+cool_remaining() { # model -> seconds it is out for (0 = usable now)
+  [ -f "$MODEL_STATE" ] || { echo 0; return; }
+  python3 - "$MODEL_STATE" "$1" <<'PY'
+import sys, time
+now = int(time.time()); worst = 0
+for line in open(sys.argv[1]):
+    p = line.rstrip("\n").split("\t")
+    if len(p) >= 2 and p[0] == sys.argv[2]:
+        try: until = int(p[1])
+        except ValueError: continue
+        worst = max(worst, until - now)
+print(max(worst, 0))
+PY
+}
+cool_model() { printf '%s\t%s\t%s\n' "$1" "$(( $(date +%s) + $2 ))" "${3:-}" >>"$MODEL_STATE"; }
+secs_until_8am() {
+  python3 -c '
+import datetime, time
+n = datetime.datetime.now()
+t = n.replace(hour=8, minute=0, second=0, microsecond=0)
+if t <= n: t += datetime.timedelta(days=1)
+print(int(t.timestamp() - time.time()))'
+}
+strike_count_today() {
+  [ -f "$STRIKES" ] || { echo 0; return; }
+  grep -c "^$(date +%F)	$1	" "$STRIKES" 2>/dev/null || true
+}
+
 mkdir -p "$ROOT/logs"
 exec 9>"$LOCK"
 say() { echo "[$(date '+%F %T')] $*"; }
@@ -80,11 +115,14 @@ say "preflight OK (budget/session/dedupe digest built)"
 PROMPT="$(cat "$ROOT/prompts/_shared.md" "$PREFLIGHT_FILE" "$ROOT/prompts/$CH.md")"
 CONTINUE_PROMPT="Continue this run from exactly where you left off — the browser is still on the page you were working on. Do not re-read any file you have already read. Pick up the next unfinished job and carry it to submit. Finish with the short Telegram report and stop."
 
-touch "$ROOT/logs/.run-marker"
-marker="$ROOT/logs/.run-marker"
-
-session_exists() { # did this run create a session transcript yet?
-  [ -d "$PROJ" ] && [ -n "$(find "$PROJ" -name '*.jsonl' -newer "$marker" -print -quit 2>/dev/null)" ]
+# Which session transcripts existed BEFORE this run? Anything new is ours. (Testing "modified after
+# the marker" instead would match every other session in the project dir — including whichever
+# session is driving the run from a terminal — and send us off resuming a session that is not ours.)
+BASELINE_SESSIONS="$(ls -1 "$PROJ"/*.jsonl 2>/dev/null | xargs -r -n1 basename | sort | tr '\n' ' ')"
+session_exists() {
+  local cur
+  cur="$(ls -1 "$PROJ"/*.jsonl 2>/dev/null | xargs -r -n1 basename | sort | tr '\n' ' ')"
+  [ "$cur" != "$BASELINE_SESSIONS" ]
 }
 
 if [ "$DRY_RUN" = 1 ]; then
@@ -108,6 +146,13 @@ i=0
 while [ "$i" -lt "${#ARR[@]}" ]; do
   m="$(echo "${ARR[$i]}" | xargs)"; i=$((i+1))
   [ -n "$m" ] || continue
+
+  # Skip a model we already know is dead today — no point paying the wall-clock to find out again.
+  cool="$(cool_remaining "$m")"
+  if [ "$cool" -gt 0 ]; then
+    say "skip model=$m — cooling down another $(( cool / 60 ))m (see $MODEL_STATE)"
+    continue
+  fi
 
   # Free models ($0) always run. A paid model is only allowed while the quota gate says OK,
   # so a budget-exhausted week ends the run instead of spending.
@@ -134,6 +179,7 @@ while [ "$i" -lt "${#ARR[@]}" ]; do
   [ "$i" -eq 1 ] && attempt="$FIRST_MODEL_CAP"
   [ "$attempt" -gt "$remaining" ] && attempt="$remaining"
 
+  sz_before="$( [ -f "$LOG" ] && wc -c <"$LOG" || echo 0 )"
   if [ -n "$USED" ] || session_exists; then
     # Resume the SAME session so the new model inherits everything already done.
     say "--- resume model=$m (cap ${attempt}s) ---"
@@ -161,6 +207,24 @@ while [ "$i" -lt "${#ARR[@]}" ]; do
   fi
   USED="$m"
 
+  # Read only what THIS attempt wrote, and learn from it so the next run does not repeat it.
+  chunk="$(tail -c +$(( sz_before + 1 )) "$LOG" 2>/dev/null)"
+  case "$chunk" in
+    *"reached today's limit"*)
+      cool_model "$m" "$(secs_until_8am)" "daily limit"
+      say "model=$m is daily-capped — cooling it until 08:00" ;;
+    *"Rate limit exceeded"*)
+      cool_model "$m" 900 "rate limited"
+      say "model=$m rate-limited — cooling it for 15m" ;;
+  esac
+  if [ "$RC" -eq 124 ]; then
+    printf '%s\t%s\tattemptcap\n' "$(date +%F)" "$m" >>"$STRIKES"
+    if [ "$(strike_count_today "$m")" -ge 2 ]; then
+      cool_model "$m" 21600 "cannot finish inside the attempt cap"
+      say "model=$m failed to finish twice today — cooling it for 6h"
+    fi
+  fi
+
   [ "$RC" -eq 0 ] && { say "model=$m ok"; break; }
   if [ "$RC" -eq 8 ]; then
     # Turn cap, not a failure: the run did real work. Resume once to finish the job rather than
@@ -173,7 +237,24 @@ while [ "$i" -lt "${#ARR[@]}" ]; do
       break
     fi
   elif [ "$RC" -eq 124 ]; then
-    say "model=$m hit the ${attempt}s attempt cap — trying the next model"
+    produced="$(printf '%s' "$chunk" | wc -c)"
+    if [ "$produced" -lt 500 ]; then
+      # Wrote essentially nothing in the whole attempt: it cannot do this job, so stop paying for it.
+      printf '%s\t%s\tattemptcap\n' "$(date +%F)" "$m" >>"$STRIKES"
+      if [ "$(strike_count_today "$m")" -ge 2 ]; then
+        cool_model "$m" 21600 "no progress inside the attempt cap"
+        say "model=$m produced nothing twice today — cooling it for 6h"
+      else
+        say "model=$m produced nothing in ${attempt}s — trying the next model"
+      fi
+    elif [ $(( $(date +%s) - START )) -lt $(( TIMEOUT - 300 )) ]; then
+      # It WAS submitting, it just ran out of its slice. Resume it on the leftover budget rather than
+      # ending the run with time unspent — this is where the extra applications come from.
+      say "model=$m was productive but hit the ${attempt}s cap — resuming it on the remaining budget"
+      ARR+=("$m")
+    else
+      say "model=$m hit the ${attempt}s cap and the run budget is spent — stopping"
+    fi
   else
     say "model=$m failed rc=$RC"
   fi
@@ -188,6 +269,7 @@ STATS="$("$ROOT/tools/run-stats.sh" --window "$START" "$(date +%s)" 2>/dev/null 
 case "$RC" in
   0) VERDICT="completed" ;;
   8) VERDICT="completed — hit the ${MAXTURNS}-turn cap (may be partial)" ;;
+  124) VERDICT="stopped at the time slice (work is real — check what was submitted below)" ;;
   *) VERDICT="FAILED (exit $RC)" ;;
 esac
 TAIL="$(tail -c 1200 "$LOG" 2>/dev/null)"

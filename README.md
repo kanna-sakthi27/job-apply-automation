@@ -99,6 +99,30 @@ input — so supporting a new job site is never a code change.
 
 ---
 
+## Prerequisites
+
+Verified against the setup this was built on (Linux x86_64):
+
+| Requirement | Why | Check |
+|---|---|---|
+| **Command Code CLI**, signed in | Runs the agent. `npm i -g command-code`, then run `cmd` once to sign in. | `cmd --version` |
+| **A plan with credits** | GOAT is what this runs on — see below. Free models cost $0, so routine runs barely touch it. | `tools/cc-quota` |
+| **Node.js + npm** | Installs the CLI and `agent-browser`. | `node --version` |
+| **`agent-browser` CLI** | Drives the browser over CDP. `npm i -g agent-browser && agent-browser install` | `agent-browser --version` |
+| **A Chromium browser** (Brave or Chrome) started with `--remote-debugging-port=9222` | It must be *your* logged-in profile — the whole approach depends on real sessions. | `curl -s 127.0.0.1:9222/json/version` |
+| **Python 3** | The pre-flight, stats and status tools parse JSON with it. | `python3 --version` |
+| **bash, flock, curl, timeout, crontab** | Browser locking, pre-flight HTTP, per-attempt timeouts, scheduling. | `flock --help` |
+| **Telegram bot token + chat id** (optional) | Where "I need an answer" questions and run reports go. Skip it and log to a file instead. | message your bot once |
+| **Your CV as a PDF** | Uploaded on every form. | `ls cv/CV.pdf` |
+
+Two things that save time:
+
+- **`flock` is Linux.** On macOS it isn't there by default — `brew install flock`, or swap the lock in
+  `cron-run.sh` for an `mkdir` lock. Everything else is portable.
+- **Log in once, by hand.** The automation never authenticates: it reports "needs the operator to
+  sign in" rather than trying. Start the browser with the debug port, sign into each board, then
+  leave that profile alone.
+
 ## Quick start
 
 ```bash
@@ -211,6 +235,59 @@ made runs cheaper" is a number, not a feeling.
 **Unattended runs stay debuggable.** Every attempt is timeout-guarded and appended to
 `logs/<channel>-<stamp>.log`, and the outcome goes to Telegram either way. That matters more than it
 sounds — see the first lesson below.
+
+### What it runs on: the Command Code GOAT plan
+
+This project runs on the **GOAT plan**: **$10/month that buys $70 of model usage** — a 7× multiplier —
+with rolling burst guards of **$14 per 5 hours** and **$35 per week** on top of the monthly pool.
+
+That shape matters more than the headline number here, because applying to jobs is *routine* work:
+
+- **Free models cost $0.** `laguna-s-2.1-free` and `ling-3.0-flash-sante:free` bill at zero and don't
+  draw down any allowance — so a day of scheduled runs on the free tier can cost nothing at all.
+- **The paid fallback is gated, not hopeful.** `cron-run.sh` only reaches for a paid model while
+  `tools/cc-quota --gate` says the budget allows it, so one throttled free model can't quietly spend
+  your month.
+- **Rolling windows suit cron.** Many small runs spread across a day are exactly what a 5-hour and
+  weekly window is designed to smooth; they exist so a burst can't drain the month.
+- **Usage is measured, not assumed.** `tools/run-stats.sh` reads the session transcripts, so "this
+  change made runs cheaper" is a number.
+
+GOAT includes 52 of the 72 catalog models, API access on the same key, and the free models above.
+If a run ever does exhaust the plan, paid models pause until the window resets while the free models
+keep working — a far better failure mode for an unattended job than a hard stop.
+
+### How this compares to the other ways of doing it
+
+The honest version: the alternatives are all reasonable, and each is worse at one specific thing this
+project needs — applying unattended, from your own logged-in sessions, at a predictable cost.
+
+| Approach | The trade-off |
+|---|---|
+| **Selector-driven scripts** (Playwright/Selenium) | Cheapest per run and fully deterministic, but every redesign is a code fix, and "if you can't answer this, ask me" has to be written by hand. |
+| **Your own LLM loop against a model API** | Maximum control — but you build the agent loop, browser tooling, retries, session continuity and budget guardrails. That's most of this repo, reimplemented. |
+| **Hosted / cloud browser agents** | Nothing to run, and good for isolated scraping — but they don't use *your* logged-in job-board sessions, and your form answers leave your machine. |
+| **AI autofill extensions** | Genuinely useful, and human-in-the-loop by design — which is the opposite of unattended. |
+| **This: headless agent runs on your own browser** | Natural-language runbooks that survive redesigns, your real sessions, files as the state store, per-run cost accounting — at the price of a plan with credits and a browser left running. |
+
+Two deliberate trade-offs: it wants a plan with credits for the fallback path, and it needs a browser
+holding your real logins. Everything else follows from those two choices.
+
+### What the CLI gives this project that a bare API call wouldn't
+
+- **Headless mode built for cron.** `cmd -p` puts the answer on stdout, progress on stderr, and
+  signals failure with real exit codes (3 = not authenticated, 5 = rate limited, 8 = max turns). That
+  is why the launcher can tell "out of turns, keep the work" apart from "model failed, try another".
+- **Permissions as a flag.** A headless run blocks file writes and shell by default; `--yolo` is an
+  explicit, auditable opt-in per run rather than a standing config.
+- **Skills on demand.** Channel mechanics load only when relevant, so context — and therefore cost —
+  stays proportional to the job at hand.
+- **Session resume.** `--resume <id>` means a model switch or a turn-cap hit continues a half-finished
+  application instead of redoing it.
+- **Everything is scriptable.** `--config key=value` reaches any setting the interactive UI can, so a
+  run is fully described by its command line and nothing lives in hidden state.
+- **Project memory in the repo.** `AGENTS.md` and the skills travel with the code, so the project
+  carries its own operating rules.
 
 ### Why this shape beats a conventional bot
 

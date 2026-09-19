@@ -9,6 +9,7 @@ auth.json
 logs/
 *.log
 .cycle.lock
+state/
 
 # ---------------------------------------------------------------- personal data
 # These are generated/tuned per user and must stay local.
