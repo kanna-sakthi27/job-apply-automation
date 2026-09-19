@@ -1,6 +1,14 @@
-## APPLICANT OVERRIDES 2026-09-07 (apply to every run)
+> Deep-dive notes for this channel: site mechanics and hard-won history. The runbook that
+> actually executes is `prompts/<channel>.md` + `prompts/_shared.md`, and **every form answer
+> comes from `bank/core.md`** — where this file and the bank disagree, the bank wins.
+>
+> Some notes here come from earlier incarnations of this system: anything mentioning
+> `browser action=…` or selecting a browser *profile* refers to a driver API that no longer
+> exists. The runbook drives the browser with the `agent-browser` CLI.
+
+## OPERATOR OVERRIDES 2026-09-07 (apply to every run)
 1. HIT 30/DAY PER CHANNEL: daily target is 30 submitted applications per channel. Do NOT stop early while in-scope supply remains. Per-run attempt cap 15 (LinkedIn: 30). Keep rotating keywords/markets (US/UK/IE/EU-English/CA/SG/AU/remote) until 30/day is reached or the fresh pool is genuinely exhausted; then log a RUN SUMMARY with counts.
-2. UNANSWERED QUESTION -> ASK, DON'T SKIP: if a required screening question has no answer in the bank, do NOT abandon/skip it silently. Send the candidate a Telegram message via conversations_send to the configured chat (user ${TELEGRAM_CHAT_ID}): job title @ company, the EXACT question text and options, note the application is paused on the candidate's answer, log it in the run-log section 5, then CONTINUE with other jobs. If the candidate answers before the run ends, come back and complete it.
+2. UNANSWERED QUESTION -> ASK, DON'T SKIP: if a required screening question has no answer in the bank, do NOT abandon/skip it silently. Send the operator a Telegram message via `tools/tg-notify.sh`: job title @ company, the EXACT question text and options, note the application is paused on the candidate's answer, log it in the run-log section 5, then CONTINUE with other jobs. If the candidate answers before the run ends, come back and complete it.
 
 # Indeed Auto-Apply Automation — Ruleset
 

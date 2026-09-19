@@ -1,6 +1,6 @@
 ---
 name: "glassdoor-job-apply"
-description: "Apply to Glassdoor DevOps/cloud jobs for the candidate against the candidate's real logged-in Brave. Use when running or repairing the Glassdoor auto-apply channel."
+description: "Apply to Glassdoor DevOps/cloud jobs for the candidate against your real logged-in Brave. Use when running or repairing the Glassdoor auto-apply channel."
 ---
 
 # Glassdoor Auto-Apply via Brave (candidate policy)

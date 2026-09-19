@@ -1,3 +1,11 @@
+> Deep-dive notes for this channel: site mechanics and hard-won history. The runbook that
+> actually executes is `prompts/<channel>.md` + `prompts/_shared.md`, and **every form answer
+> comes from `bank/core.md`** — where this file and the bank disagree, the bank wins.
+>
+> Some notes here come from earlier incarnations of this system: anything mentioning
+> `browser action=…` or selecting a browser *profile* refers to a driver API that no longer
+> exists. The runbook drives the browser with the `agent-browser` CLI.
+
 # Glassdoor Auto-Apply Automation — Ruleset
 
 Operating rules for scheduled runs on **Glassdoor** for the candidate. Each run

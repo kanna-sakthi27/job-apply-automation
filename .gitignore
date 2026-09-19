@@ -13,6 +13,7 @@ logs/
 # ---------------------------------------------------------------- personal data
 # These are generated/tuned per user and must stay local.
 # Ship the *.example.md templates instead.
+bank/core.md
 answers.md
 applied-jobs-registry.md
 *-automation/answers.md

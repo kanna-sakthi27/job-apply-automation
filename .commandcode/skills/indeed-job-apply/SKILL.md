@@ -1,6 +1,6 @@
 ---
 name: "indeed-job-apply"
-description: "Apply to Indeed DevOps/cloud jobs for the candidate against the candidate's real logged-in Brave. Use when running or repairing the Indeed auto-apply channel."
+description: "Apply to Indeed DevOps/cloud jobs for the candidate against your real logged-in Brave. Use when running or repairing the Indeed auto-apply channel."
 ---
 
 # Indeed Auto-Apply via Brave (candidate policy)
