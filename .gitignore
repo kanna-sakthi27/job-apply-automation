@@ -1,0 +1,33 @@
+# ---------------------------------------------------------------- secrets
+.env
+.env.*
+!.env.example
+*.session
+auth.json
+
+# ---------------------------------------------------------------- runtime state
+logs/
+*.log
+.cycle.lock
+
+# ---------------------------------------------------------------- personal data
+# These are generated/tuned per user and must stay local.
+# Ship the *.example.md templates instead.
+answers.md
+applied-jobs-registry.md
+*-automation/answers.md
+*-automation/run-log.md
+*-automation/ATS_REGISTRY.md
+
+# ---------------------------------------------------------------- CV
+cv/*.pdf
+cv/*.docx
+**/cv/*.pdf
+**/cv/*.docx
+*.pdf
+
+# ---------------------------------------------------------------- misc
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
